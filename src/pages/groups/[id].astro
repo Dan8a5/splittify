@@ -48,6 +48,7 @@ const { data: splits } = expenseIds.length > 0
   : { data: [] }
 
 const balances = calculateBalances(expenses ?? [], splits ?? [])
+const totalCents = (expenses ?? []).reduce((sum: number, e: any) => sum + e.amount_cents, 0)
 
 type Member = { user_id: string; profiles: { id: string; email: string } }
 const memberList = (members ?? []) as Member[]
@@ -59,7 +60,11 @@ const memberList = (members ?? []) as Member[]
         <div>
           <a href="/dashboard" style="color:var(--text-muted);font-size:0.8rem;">← Back to groups</a>
           <h1 class="group-page-title" style="margin-top:0.4rem;">{group.name}</h1>
-          <div class="group-page-meta">{memberList.length} member{memberList.length !== 1 ? 's' : ''}</div>
+          <div class="group-page-meta">
+            {memberList.length} member{memberList.length !== 1 ? 's' : ''}
+            <span style="margin:0 0.4rem;color:var(--text-muted);">·</span>
+            <span id="group-total">Total spent: <strong>${centsToDisplay(totalCents)}</strong></span>
+          </div>
         </div>
         <div style="display:flex;gap:0.5rem;align-items:center;margin-top:0.5rem;">
           <form method="POST" action={`/api/groups/${groupId}/archive`}>
