@@ -1,0 +1,24 @@
+---
+import Layout from '../layouts/Layout.astro'
+const error = Astro.url.searchParams.get('error')
+---
+<Layout title="Sign up">
+  <main>
+    <div class="auth-container">
+      <h1 class="auth-title">Create account</h1>
+      {error && <p class="error-msg">{error}</p>}
+      <form method="POST" action="/api/auth/signup">
+        <div class="form-group">
+          <label for="email">Email</label>
+          <input id="email" type="email" name="email" required autocomplete="email" />
+        </div>
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input id="password" type="password" name="password" required minlength="6" autocomplete="new-password" />
+        </div>
+        <button type="submit" class="btn btn-outline-green" style="width:100%">Sign up</button>
+      </form>
+      <p class="auth-footer">Already have an account? <a href="/signin">Sign in</a></p>
+    </div>
+  </main>
+</Layout>

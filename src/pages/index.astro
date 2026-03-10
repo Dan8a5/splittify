@@ -1,0 +1,20 @@
+---
+import Layout from '../layouts/Layout.astro'
+import { createSupabaseServerClient } from '../lib/supabase'
+
+const supabase = createSupabaseServerClient(Astro.request, Astro.cookies)
+const { data: { user } } = await supabase.auth.getUser()
+if (user) return Astro.redirect('/dashboard')
+---
+<Layout title="Home">
+  <main style="max-width:none; padding:0;">
+    <section class="hero">
+      <h1>Split expenses,<br /><span>without the awkwardness.</span></h1>
+      <p>Track shared expenses with friends, roommates, or travel buddies. See who owes what. Settle up easily.</p>
+      <div class="hero-cta">
+        <a href="/signup" class="btn btn-outline-green">Get started</a>
+        <a href="/signin" class="btn btn-outline">Sign in</a>
+      </div>
+    </section>
+  </main>
+</Layout>

@@ -1,0 +1,176 @@
+---
+import Layout from '../layouts/Layout.astro'
+import { createSupabaseServerClient } from '../lib/supabase'
+import { calculateBalances, centsToDisplay } from '../lib/balance'
+
+const supabase = createSupabaseServerClient(Astro.request, Astro.cookies)
+const { data: { user } } = await supabase.auth.getUser()
+if (!user) return Astro.redirect('/signin')
+
+// Get user's groups with member counts
+const { data: memberships } = await supabase
+  .from('group_members')
+  .select('group_id, groups(id, name, archived, created_at)')
+  .eq('user_id', user.id)
+
+const groups = (memberships ?? [])
+  .map((m: any) => m.groups)
+  .filter(Boolean)
+
+// For each group, calculate the user's net balance
+async function getGroupBalance(groupId: string) {
+  const { data: expenses } = await supabase
+    .from('expenses')
+    .select('id, paid_by, amount_cents')
+    .eq('group_id', groupId)
+
+  if (!expenses || expenses.length === 0) return 0
+
+  const { data: splits } = await supabase
+    .from('expense_splits')
+    .select('expense_id, user_id, amount_cents')
+    .in('expense_id', expenses.map((e: any) => e.id))
+
+  const balances = calculateBalances(expenses, splits ?? [])
+  return balances[user!.id] ?? 0
+}
+
+// Get member counts
+async function getMemberCount(groupId: string) {
+  const { count } = await supabase
+    .from('group_members')
+    .select('id', { count: 'exact', head: true })
+    .eq('group_id', groupId)
+  return count ?? 0
+}
+
+type GroupInfo = {
+  id: string
+  name: string
+  archived: boolean
+  balance: number
+  memberCount: number
+}
+
+const groupInfos: GroupInfo[] = await Promise.all(
+  groups.map(async (g: any) => ({
+    id: g.id,
+    name: g.name,
+    archived: g.archived,
+    balance: await getGroupBalance(g.id),
+    memberCount: await getMemberCount(g.id),
+  }))
+)
+
+const activeGroups = groupInfos.filter(g => !g.archived)
+const archivedGroups = groupInfos.filter(g => g.archived)
+
+const error = Astro.url.searchParams.get('error')
+---
+<Layout title="Dashboard" user={user}>
+  <main>
+    {error && <p class="error-msg">{error}</p>}
+
+    <div class="section-header">
+      <h1 class="section-title">Your groups</h1>
+      <button class="btn btn-outline-yellow" x-data x-on:click="$dispatch('open-new-group')">
+        + New group
+      </button>
+    </div>
+
+    <div class="groups-grid">
+      {activeGroups.map(g => (
+        <div class="card card-link" x-data style="position:relative;" x-on:click={`window.location='/groups/${g.id}'`}>
+          <div class="group-card-header">
+            <div>
+              <div class="group-name">{g.name}</div>
+              <div class="group-meta">{g.memberCount} member{g.memberCount !== 1 ? 's' : ''}</div>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:0.75rem;">
+              <div class="balance-block">
+                {g.balance === 0 ? (
+                  <>
+                    <div class="balance-label">settled up</div>
+                    <div class="balance-amount amount-settled">$0.00</div>
+                  </>
+                ) : g.balance < 0 ? (
+                  <>
+                    <div class="balance-label">you owe</div>
+                    <div class="balance-amount amount-owe">${centsToDisplay(g.balance)}</div>
+                  </>
+                ) : (
+                  <>
+                    <div class="balance-label">you are owed</div>
+                    <div class="balance-amount amount-owed">${centsToDisplay(g.balance)}</div>
+                  </>
+                )}
+              </div>
+              <form
+                method="POST"
+                action={`/api/groups/${g.id}/delete`}
+                x-on:click.stop
+                x-on:submit.prevent={`if(confirm('Delete "${g.name}"? This cannot be undone.')) $el.submit()`}
+                style="margin:0;"
+              >
+                <button type="submit" class="btn-trash" title="Delete group">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
+                    <path d="M10 11v6"></path>
+                    <path d="M14 11v6"></path>
+                    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path>
+                  </svg>
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+
+    {archivedGroups.length > 0 && (
+      <div x-data="{ open: false }" style="margin-top:2rem;">
+        <button class="archived-toggle" x-on:click="open = !open">
+          <span x-text="open ? '▼' : '►'">►</span>
+          <span>Archived ( {archivedGroups.length} )</span>
+        </button>
+        <div x-show="open" class="groups-grid">
+          {archivedGroups.map(g => (
+            <a href={`/groups/${g.id}`} class="card card-link" style="opacity:0.6;">
+              <div class="group-card-header">
+                <div>
+                  <div class="group-name">{g.name}</div>
+                  <div class="group-meta">{g.memberCount} member{g.memberCount !== 1 ? 's' : ''}</div>
+                </div>
+              </div>
+            </a>
+          ))}
+        </div>
+      </div>
+    )}
+  </main>
+
+  <!-- New Group Modal -->
+  <div
+    x-data="{ open: false }"
+    x-on:open-new-group.window="open = true"
+    x-show="open"
+    x-cloak
+    class="modal-backdrop"
+    x-on:click.self="open = false"
+  >
+    <div class="modal">
+      <h2 class="modal-title">New group</h2>
+      <form method="POST" action="/api/groups">
+        <div class="form-group">
+          <label for="group-name">Group name</label>
+          <input id="group-name" name="name" type="text" required placeholder="e.g. Spain trip" autofocus />
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" x-on:click="open = false">Cancel</button>
+          <button type="submit" class="btn btn-outline-green">Create</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</Layout>

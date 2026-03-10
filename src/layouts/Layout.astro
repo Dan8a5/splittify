@@ -1,0 +1,43 @@
+---
+import '../styles/global.css'
+
+interface Props {
+  title?: string
+  user?: { email?: string } | null
+}
+const { title = 'Splittify', user } = Astro.props
+---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{title} — Splittify</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4" is:inline></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" is:inline></script>
+</head>
+<body>
+  <nav>
+    <a href={user ? '/dashboard' : '/'} class="logo">Splittify</a>
+    <div class="nav-actions">
+      {user ? (
+        <>
+          <span class="nav-email">{user.email}</span>
+          <form method="POST" action="/api/auth/signout" style="margin:0">
+            <button type="submit" class="btn btn-ghost">Sign out</button>
+          </form>
+        </>
+      ) : (
+        <>
+          <a href="/signin" class="btn btn-ghost">Sign in</a>
+          <a href="/signup" class="btn btn-outline-yellow">Sign up</a>
+        </>
+      )}
+    </div>
+  </nav>
+  <slot />
+  <footer>
+    <span>Splittify</span>
+  </footer>
+</body>
+</html>
