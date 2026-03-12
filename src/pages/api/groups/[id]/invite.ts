@@ -30,7 +30,7 @@ export const POST: APIRoute = async ({ request, cookies, params }) => {
     .single()
 
   if (!profile) {
-    return new Response(`<p class="error-msg">No user found with email: ${email}</p>`, {
+    return new Response(`<p class="error-msg"><strong>${email}</strong> doesn't have a Splittify account yet. Ask them to sign up at <a href="/signup">/signup</a>, then invite them here.</p>`, {
       headers: { 'Content-Type': 'text/html' },
     })
   }
