@@ -78,8 +78,11 @@ const error = Astro.url.searchParams.get('error')
       </button>
     </div>
 
-    {activeGroups.length === 0 && (
+    {activeGroups.length === 0 && archivedGroups.length === 0 && (
       <p class="empty-state">No groups yet. Create one to get started.</p>
+    )}
+    {activeGroups.length === 0 && archivedGroups.length > 0 && (
+      <p class="empty-state">No active groups.</p>
     )}
 
     <div class="groups-grid">

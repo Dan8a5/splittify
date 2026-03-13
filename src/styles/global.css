@@ -39,7 +39,7 @@ nav {
 .logo { color: var(--green); font-size: 1.25rem; font-weight: 700; }
 
 .nav-actions { display: flex; gap: 1rem; align-items: center; }
-.nav-email { color: var(--text-muted); font-size: 0.85rem; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-email { color: var(--text-muted); font-size: 0.85rem; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; }
 
 /* BUTTONS */
 .btn {
@@ -232,6 +232,7 @@ footer {
 .modal-backdrop {
   position: fixed; inset: 0;
   background: rgba(0,0,0,0.6);
+  -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
