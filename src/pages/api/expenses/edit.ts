@@ -1,25 +1,43 @@
 import type { APIRoute } from 'astro'
-import { createSupabaseServerClient, createSupabaseAdmin } from '../../../../lib/supabase'
-import { calculateSplits, calculateBalances, centsToDisplay } from '../../../../lib/balance'
+import { createSupabaseServerClient, createSupabaseAdmin } from '../../../lib/supabase'
+import { calculateSplits, calculateBalances, centsToDisplay } from '../../../lib/balance'
 
-export const POST: APIRoute = async ({ request, cookies, params }) => {
+function escAttr(s: string) {
+  return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+export const POST: APIRoute = async ({ request, cookies }) => {
   const supabase = createSupabaseServerClient(request, cookies)
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return new Response('Unauthorized', { status: 401 })
 
-  const groupId = params.id!
   const admin = createSupabaseAdmin()
+  const form = await request.formData()
 
-  // Verify membership
+  const expenseId = form.get('expense_id')?.toString() ?? ''
+  if (!expenseId) return new Response('Missing expense_id', { status: 400 })
+
+  // Fetch expense to get group_id
+  const { data: expense } = await admin
+    .from('expenses')
+    .select('id, group_id')
+    .eq('id', expenseId)
+    .single()
+
+  if (!expense) return new Response('Not found', { status: 404 })
+
+  const groupId = expense.group_id
+
+  // Verify user is a member of this group
   const { data: membership } = await admin
     .from('group_members')
     .select('id')
     .eq('group_id', groupId)
     .eq('user_id', user.id)
     .single()
+
   if (!membership) return new Response('Forbidden', { status: 403 })
 
-  const form = await request.formData()
   const description = form.get('description')?.toString().trim() ?? ''
   const amountStr = form.get('amount')?.toString() ?? '0'
   const paidBy = form.get('paid_by')?.toString() ?? user.id
@@ -38,21 +56,17 @@ export const POST: APIRoute = async ({ request, cookies, params }) => {
     })
   }
 
-  const { data: expense, error: expErr } = await admin
+  // Update the expense
+  await admin
     .from('expenses')
-    .insert({ group_id: groupId, paid_by: paidBy, amount_cents: amountCents, description })
-    .select()
-    .single()
+    .update({ description, amount_cents: amountCents, paid_by: paidBy })
+    .eq('id', expenseId)
 
-  if (expErr || !expense) {
-    return new Response('<div id="expense-form-error"><p class="error-msg">Failed to add expense.</p></div><div id="expenses-list"></div>', {
-      headers: { 'Content-Type': 'text/html' },
-    })
-  }
-
+  // Replace splits
+  await admin.from('expense_splits').delete().eq('expense_id', expenseId)
   const splits = calculateSplits(amountCents, splitIds)
   await admin.from('expense_splits').insert(
-    splits.map(s => ({ expense_id: expense.id, user_id: s.user_id, amount_cents: s.amount_cents }))
+    splits.map(s => ({ expense_id: expenseId, user_id: s.user_id, amount_cents: s.amount_cents }))
   )
 
   // Return updated expenses list + balances
@@ -77,10 +91,6 @@ export const POST: APIRoute = async ({ request, cookies, params }) => {
 
   const pencilIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>`
   const trashIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>`
-
-  function escAttr(s: string) {
-    return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  }
 
   const expensesHtml = (allExpenses ?? []).map((e: any) => {
     const paidByEmail = e.profiles?.email ?? 'Unknown'
