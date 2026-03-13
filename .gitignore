@@ -3,3 +3,5 @@ dist/
 .env
 .astro/
 .claude/
+.agents/
+skills-lock.json
