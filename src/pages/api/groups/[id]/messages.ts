@@ -39,7 +39,8 @@ export const POST: APIRoute = async ({ request, cookies, params }) => {
     .single()
 
   if (error || !message) {
-    return new Response('<p class="error-msg">Failed to send message.</p>', {
+    console.error('messages insert error:', error)
+    return new Response(`<p class="error-msg">Failed to send message: ${error?.message ?? 'unknown error'}</p>`, {
       status: 422,
       headers: { 'Content-Type': 'text/html' },
     })
