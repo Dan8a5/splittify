@@ -39,7 +39,7 @@ nav {
 .logo { color: var(--green); font-size: 1.25rem; font-weight: 700; }
 
 .nav-actions { display: flex; gap: 1rem; align-items: center; }
-.nav-email { color: var(--text-muted); font-size: 0.85rem; }
+.nav-email { color: var(--text-muted); font-size: 0.85rem; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; }
 
 /* BUTTONS */
 .btn {
@@ -199,12 +199,22 @@ footer {
 .balance-item {
   padding: 0.6rem 0;
   border-bottom: 1px solid var(--border);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
   font-size: 0.85rem;
 }
 .balance-item:last-child { border-bottom: none; }
+.balance-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  cursor: pointer;
+  user-select: none;
+}
+.balance-row-right { display: flex; align-items: center; gap: 0.4rem; }
+.balance-expand-hint { font-size: 0.6rem; color: var(--text-muted); display: inline-block; transition: transform 0.15s; }
+.balance-breakdown { margin-top: 0.5rem; padding: 0.4rem 0 0.1rem; border-top: 1px solid var(--border); }
+.breakdown-row { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--text-muted); padding: 0.15rem 0; }
+.breakdown-total { border-top: 1px solid var(--border); margin-top: 0.3rem; padding-top: 0.35rem; color: var(--text); font-size: 0.78rem; }
 
 /* MEMBER LIST */
 .member-chip {
@@ -222,6 +232,8 @@ footer {
 .modal-backdrop {
   position: fixed; inset: 0;
   background: rgba(0,0,0,0.6);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -284,6 +296,20 @@ footer {
 }
 .btn-trash:hover { color: var(--red); }
 
+/* PENCIL / EDIT BUTTON */
+.btn-pencil {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 0.2rem;
+  display: flex;
+  align-items: center;
+  border-radius: 4px;
+  transition: color 0.15s;
+}
+.btn-pencil:hover { color: var(--blue); }
+
 /* HTMX loading state */
 .htmx-indicator { display: none; }
 .htmx-request .htmx-indicator { display: inline; }
@@ -293,3 +319,35 @@ footer {
 
 /* Alpine cloak */
 [x-cloak] { display: none !important; }
+
+/* Back navigation link */
+.back-link { color: var(--text-muted); font-size: 0.8rem; display: inline-block; margin-bottom: 0.4rem; }
+.back-link:hover { color: var(--text); }
+
+/* Page header row — title left, actions right */
+.page-header-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+
+/* Action buttons grouped in a header */
+.header-actions { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.5rem; }
+
+/* Small uppercase section/column headings */
+.col-heading { font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; margin-bottom: 0.875rem; }
+
+/* Inline invite form row */
+.invite-form { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+.invite-form input { flex: 1; }
+
+/* Full-width button */
+.btn-block { width: 100%; }
+
+/* Empty state message */
+.empty-state { color: var(--text-muted); font-size: 0.85rem; padding: 1rem 0; }
+
+/* Expense row right side (amount + trash) */
+.expense-actions { display: flex; align-items: center; gap: 0.75rem; flex-shrink: 0; }
+
+/* Group card right side (balance + trash) */
+.card-right { display: flex; align-items: flex-start; gap: 0.75rem; }
+
+/* Archived group card */
+.archived-card { opacity: 0.55; }

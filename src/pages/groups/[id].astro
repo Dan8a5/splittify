@@ -52,13 +52,40 @@ const totalCents = (expenses ?? []).reduce((sum: number, e: any) => sum + e.amou
 
 type Member = { user_id: string; profiles: { id: string; email: string } }
 const memberList = (members ?? []) as Member[]
+
+// Precompute per-user paid and share totals in one pass each
+const paidByUser: Record<string, number> = {}
+for (const e of expenses ?? []) {
+  paidByUser[(e as any).paid_by] = (paidByUser[(e as any).paid_by] ?? 0) + (e as any).amount_cents
+}
+const shareByUser: Record<string, number> = {}
+for (const s of splits ?? []) {
+  shareByUser[(s as any).user_id] = (shareByUser[(s as any).user_id] ?? 0) + (s as any).amount_cents
+}
+
+// Per-member paid/share breakdown
+const breakdowns: Record<string, { paid: number; share: number }> = {}
+for (const m of memberList) {
+  breakdowns[m.user_id] = {
+    paid: paidByUser[m.user_id] ?? 0,
+    share: shareByUser[m.user_id] ?? 0,
+  }
+}
+
+// Map of expense_id -> split member IDs for pre-filling the edit modal
+const splitsByExpense: Record<string, string[]> = {}
+for (const s of splits ?? []) {
+  const expId = (s as any).expense_id
+  if (!splitsByExpense[expId]) splitsByExpense[expId] = []
+  splitsByExpense[expId].push((s as any).user_id)
+}
 ---
 <Layout title={group.name} user={user}>
   <main>
     <div class="group-page-header">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap;">
+      <div class="page-header-row">
         <div>
-          <a href="/dashboard" style="color:var(--text-muted);font-size:0.8rem;">← Back to groups</a>
+          <a href="/dashboard" class="back-link">← Back to groups</a>
           <h1 class="group-page-title" style="margin-top:0.4rem;">{group.name}</h1>
           <div class="group-page-meta">
             {memberList.length} member{memberList.length !== 1 ? 's' : ''}
@@ -66,7 +93,7 @@ const memberList = (members ?? []) as Member[]
             <span id="group-total">Total spent: <strong>${centsToDisplay(totalCents)}</strong></span>
           </div>
         </div>
-        <div style="display:flex;gap:0.5rem;align-items:center;margin-top:0.5rem;">
+        <div class="header-actions">
           <form method="POST" action={`/api/groups/${groupId}/archive`}>
             <input type="hidden" name="archived" value={group.archived ? 'false' : 'true'} />
             <button type="submit" class="btn btn-outline" style="font-size:0.75rem;">
@@ -87,7 +114,7 @@ const memberList = (members ?? []) as Member[]
     <div class="two-col">
       <!-- LEFT: Expenses -->
       <div>
-        <h2 style="font-size:1rem;color:var(--text-muted);margin-bottom:1rem;text-transform:uppercase;letter-spacing:0.05em;">Expenses</h2>
+        <h2 class="col-heading">Expenses</h2>
         <div
           id="expenses-section"
         >
@@ -101,8 +128,21 @@ const memberList = (members ?? []) as Member[]
                     Paid by {e.profiles?.email ?? 'Unknown'} · {new Date(e.created_at).toLocaleDateString()}
                   </div>
                 </div>
-                <div style="display:flex;align-items:center;gap:0.75rem;">
+                <div class="expense-actions">
                   <div class="expense-amount">${centsToDisplay(e.amount_cents)}</div>
+                  <button
+                    type="button"
+                    class="btn-pencil"
+                    title="Edit expense"
+                    aria-label="Edit expense"
+                    data-description={e.description}
+                    data-amount={(e.amount_cents / 100).toFixed(2)}
+                    data-paid-by={e.paid_by}
+                    data-split-with={JSON.stringify(splitsByExpense[e.id] ?? [])}
+                    onclick={`window.dispatchEvent(new CustomEvent('open-edit-expense',{detail:{id:'${e.id}',description:this.dataset.description,amount:this.dataset.amount,paidBy:this.dataset.paidBy,splitWith:JSON.parse(this.dataset.splitWith)}}))`}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                  </button>
                   <form method="POST" action={`/api/expenses/${e.id}/delete`} style="margin:0;">
                     <button type="submit" class="btn-trash" title="Delete expense" onclick="event.preventDefault();if(confirm('Delete this expense?'))this.closest('form').submit()">
                       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -116,7 +156,7 @@ const memberList = (members ?? []) as Member[]
                 </div>
               </div>
             )) : (
-              <p style="color:var(--text-muted);font-size:0.85rem;">No expenses yet.</p>
+              <p class="empty-state">No expenses yet.</p>
             )}
           </div>
         </div>
@@ -126,7 +166,7 @@ const memberList = (members ?? []) as Member[]
       <div>
         <!-- Members -->
         <div class="card" style="margin-bottom:1rem;">
-          <h2 style="font-size:0.85rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.75rem;">Members</h2>
+          <h2 class="col-heading">Members</h2>
           <div id="members-list">
             {memberList.map(m => (
               <span class="member-chip">
@@ -142,39 +182,63 @@ const memberList = (members ?? []) as Member[]
               hx-target="#members-list"
               hx-swap="outerHTML"
               hx-on::after-request="this.reset()"
-              style="display:flex;gap:0.5rem;margin-top:0.75rem;"
+              class="invite-form"
             >
               <input
                 type="email"
                 name="email"
                 placeholder="Invite by email"
-                style="flex:1;font-size:0.8rem;"
               />
-              <button type="submit" class="btn btn-outline-green" style="white-space:nowrap;font-size:0.75rem;">Invite</button>
+              <button type="submit" class="btn btn-outline-green">Invite</button>
             </form>
           </div>
         </div>
 
         <!-- Balances -->
         <div class="card">
-          <h2 style="font-size:0.85rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.75rem;">Balances</h2>
+          <h2 class="col-heading">Balances</h2>
           <div id="balances-section">
             {memberList.map(m => {
               const net = balances[m.user_id] ?? 0
               const label = m.user_id === user.id ? 'You' : m.profiles.email
+              const { paid, share } = breakdowns[m.user_id] ?? { paid: 0, share: 0 }
               return (
-                <div class="balance-item">
-                  <span>{label}</span>
-                  {net === 0
-                    ? <span class="amount-settled">settled</span>
-                    : net > 0
-                      ? <span class="amount-owed">+${centsToDisplay(net)}</span>
-                      : <span class="amount-owe">-${centsToDisplay(net)}</span>
-                  }
+                <div class="balance-item" x-data="{ open: false }">
+                  <div class="balance-row" x-on:click="open = !open">
+                    <span>{label}</span>
+                    <div class="balance-row-right">
+                      {net === 0
+                        ? <span class="amount-settled">settled</span>
+                        : net > 0
+                          ? <span class="amount-owed">+${centsToDisplay(net)}</span>
+                          : <span class="amount-owe">-${centsToDisplay(net)}</span>
+                      }
+                      <span class="balance-expand-hint" x-bind:style="open ? 'transform:rotate(90deg)' : ''">▶</span>
+                    </div>
+                  </div>
+                  <div class="balance-breakdown" x-show="open" x-cloak>
+                    <div class="breakdown-row">
+                      <span>Paid</span>
+                      <span>${centsToDisplay(paid)}</span>
+                    </div>
+                    <div class="breakdown-row">
+                      <span>Share</span>
+                      <span>${centsToDisplay(share)}</span>
+                    </div>
+                    <div class="breakdown-row breakdown-total">
+                      <span>Net</span>
+                      {net === 0
+                        ? <span class="amount-settled">settled</span>
+                        : net > 0
+                          ? <span class="amount-owed">+${centsToDisplay(net)}</span>
+                          : <span class="amount-owe">-${centsToDisplay(net)}</span>
+                      }
+                    </div>
+                  </div>
                 </div>
               )
             })}
-            {memberList.length === 0 && <p style="color:var(--text-muted);font-size:0.85rem;">No balances yet.</p>}
+            {memberList.length === 0 && <p class="empty-state">No balances yet.</p>}
           </div>
         </div>
       </div>
@@ -184,7 +248,7 @@ const memberList = (members ?? []) as Member[]
   <!-- Add Expense Modal -->
   <div
     x-data="{ open: false }"
-    x-on:open-add-expense.window="open = true"
+    x-on:open-add-expense.window="open = true; document.getElementById('add-expense-error').innerHTML = ''"
     x-show="open"
     x-cloak
     class="modal-backdrop"
@@ -192,11 +256,12 @@ const memberList = (members ?? []) as Member[]
   >
     <div class="modal">
       <h2 class="modal-title">Add expense</h2>
+      <div id="add-expense-error"></div>
       <form
         hx-post={`/api/groups/${groupId}/expenses`}
         hx-target="#expenses-section"
         hx-swap="innerHTML"
-        hx-on::after-request="if(event.detail.successful) { this.reset(); window.dispatchEvent(new CustomEvent('close-add-expense')) }"
+        hx-on::after-request="if(event.detail.successful) { this.reset(); window.dispatchEvent(new CustomEvent('close-add-expense')) } else { document.getElementById('add-expense-error').innerHTML = event.detail.xhr.responseText }"
         x-on:close-add-expense.window="open = false"
       >
         <div class="form-group">
@@ -231,6 +296,63 @@ const memberList = (members ?? []) as Member[]
         <div class="modal-footer">
           <button type="button" class="btn btn-outline" x-on:click="open = false">Cancel</button>
           <button type="submit" class="btn btn-outline-green">Add</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Edit Expense Modal -->
+  <div
+    x-data="{ open: false, id: '', description: '', amount: '', paidBy: '', splitWith: [] }"
+    x-on:open-edit-expense.window="open = true; id = $event.detail.id; description = $event.detail.description; amount = $event.detail.amount; paidBy = $event.detail.paidBy; splitWith = $event.detail.splitWith; document.getElementById('edit-expense-error').innerHTML = ''"
+    x-show="open"
+    x-cloak
+    class="modal-backdrop"
+    x-on:click.self="open = false"
+  >
+    <div class="modal">
+      <h2 class="modal-title">Edit expense</h2>
+      <div id="edit-expense-error"></div>
+      <form
+        hx-post="/api/expenses/edit"
+        hx-target="#expenses-section"
+        hx-swap="innerHTML"
+        hx-on::after-request="if(event.detail.successful) { window.dispatchEvent(new CustomEvent('close-edit-expense')) } else { document.getElementById('edit-expense-error').innerHTML = event.detail.xhr.responseText }"
+        x-on:close-edit-expense.window="open = false"
+      >
+        <input type="hidden" name="expense_id" x-bind:value="id" />
+        <div class="form-group">
+          <label for="edit-desc">Description</label>
+          <input id="edit-desc" name="description" type="text" required x-model="description" />
+        </div>
+        <div class="form-group">
+          <label for="edit-amount">Amount ($)</label>
+          <input id="edit-amount" name="amount" type="number" step="0.01" min="0.01" required x-model="amount" />
+        </div>
+        <div class="form-group">
+          <label for="edit-paidby">Paid by</label>
+          <select id="edit-paidby" name="paid_by" x-model="paidBy">
+            {memberList.map(m => (
+              <option value={m.user_id}>
+                {m.user_id === user.id ? `${m.profiles.email} (you)` : m.profiles.email}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Split with</label>
+          <div class="checkbox-group">
+            {memberList.map(m => (
+              <label class="checkbox-label">
+                <input type="checkbox" name="split_with" value={m.user_id} x-bind:checked={`splitWith.includes('${m.user_id}')`} />
+                {m.user_id === user.id ? 'You' : m.profiles.email}
+              </label>
+            ))}
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" x-on:click="open = false">Cancel</button>
+          <button type="submit" class="btn btn-outline-yellow">Save changes</button>
         </div>
       </form>
     </div>
