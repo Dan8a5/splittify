@@ -24,14 +24,21 @@ async function getGroupBalance(groupId: string) {
     .select('id, paid_by, amount_cents')
     .eq('group_id', groupId)
 
-  if (!expenses || expenses.length === 0) return 0
+  const { data: settlements } = await supabase
+    .from('settlements')
+    .select('from_user_id, to_user_id, amount_cents')
+    .eq('group_id', groupId)
 
-  const { data: splits } = await supabase
-    .from('expense_splits')
-    .select('expense_id, user_id, amount_cents')
-    .in('expense_id', expenses.map((e: any) => e.id))
+  if ((!expenses || expenses.length === 0) && (!settlements || settlements.length === 0)) return 0
 
-  const balances = calculateBalances(expenses, splits ?? [])
+  const { data: splits } = expenses && expenses.length > 0
+    ? await supabase
+        .from('expense_splits')
+        .select('expense_id, user_id, amount_cents')
+        .in('expense_id', expenses.map((e: any) => e.id))
+    : { data: [] }
+
+  const balances = calculateBalances(expenses ?? [], splits ?? [], settlements ?? [])
   return balances[user!.id] ?? 0
 }
 

@@ -1,7 +1,7 @@
 ---
 import Layout from '../../layouts/Layout.astro'
 import { createSupabaseServerClient } from '../../lib/supabase'
-import { calculateBalances, centsToDisplay } from '../../lib/balance'
+import { calculateBalances, simplifyDebts, centsToDisplay } from '../../lib/balance'
 
 const supabase = createSupabaseServerClient(Astro.request, Astro.cookies)
 const { data: { user } } = await supabase.auth.getUser()
@@ -47,7 +47,13 @@ const { data: splits } = expenseIds.length > 0
   ? await supabase.from('expense_splits').select('expense_id, user_id, amount_cents').in('expense_id', expenseIds)
   : { data: [] }
 
-const balances = calculateBalances(expenses ?? [], splits ?? [])
+// Fetch settlements
+const { data: settlements } = await supabase
+  .from('settlements')
+  .select('from_user_id, to_user_id, amount_cents')
+  .eq('group_id', groupId)
+
+const balances = calculateBalances(expenses ?? [], splits ?? [], settlements ?? [])
 const totalCents = (expenses ?? []).reduce((sum: number, e: any) => sum + e.amount_cents, 0)
 
 type Member = { user_id: string; profiles: { id: string; email: string } }
@@ -72,12 +78,18 @@ for (const m of memberList) {
   }
 }
 
+const suggestedPayments = simplifyDebts(balances)
+
 // Map of expense_id -> split member IDs for pre-filling the edit modal
 const splitsByExpense: Record<string, string[]> = {}
+const splitAmountsByExpense: Record<string, Record<string, string>> = {}
 for (const s of splits ?? []) {
   const expId = (s as any).expense_id
+  const uid = (s as any).user_id
   if (!splitsByExpense[expId]) splitsByExpense[expId] = []
-  splitsByExpense[expId].push((s as any).user_id)
+  splitsByExpense[expId].push(uid)
+  if (!splitAmountsByExpense[expId]) splitAmountsByExpense[expId] = {}
+  splitAmountsByExpense[expId][uid] = ((s as any).amount_cents / 100).toFixed(2)
 }
 
 // Fetch messages
@@ -147,7 +159,8 @@ const { data: messages } = await supabase
                     data-amount={(e.amount_cents / 100).toFixed(2)}
                     data-paid-by={e.paid_by}
                     data-split-with={JSON.stringify(splitsByExpense[e.id] ?? [])}
-                    onclick={`window.dispatchEvent(new CustomEvent('open-edit-expense',{detail:{id:'${e.id}',description:this.dataset.description,amount:this.dataset.amount,paidBy:this.dataset.paidBy,splitWith:JSON.parse(this.dataset.splitWith)}}))`}
+                    data-split-amounts={JSON.stringify(splitAmountsByExpense[e.id] ?? {})}
+                    onclick={`window.dispatchEvent(new CustomEvent('open-edit-expense',{detail:{id:'${e.id}',description:this.dataset.description,amount:this.dataset.amount,paidBy:this.dataset.paidBy,splitWith:JSON.parse(this.dataset.splitWith),splitAmounts:JSON.parse(this.dataset.splitAmounts)}}))`}
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                   </button>
@@ -203,7 +216,7 @@ const { data: messages } = await supabase
         </div>
 
         <!-- Balances -->
-        <div class="card">
+        <div class="card" style="margin-bottom:1rem;">
           <h2 class="col-heading">Balances</h2>
           <div id="balances-section">
             {memberList.map(m => {
@@ -249,6 +262,41 @@ const { data: messages } = await supabase
             {memberList.length === 0 && <p class="empty-state">No balances yet.</p>}
           </div>
         </div>
+
+        <!-- Suggested Payments -->
+        <div class="card">
+          <h2 class="col-heading">Suggested Payments</h2>
+          <div id="suggested-payments">
+            {suggestedPayments.length === 0
+              ? <p class="empty-state">All settled up!</p>
+              : suggestedPayments.map(p => {
+                  const fromLabel = p.from === user.id ? 'You' : (memberList.find(m => m.user_id === p.from)?.profiles.email ?? 'Unknown')
+                  const toLabel = p.to === user.id ? 'you' : (memberList.find(m => m.user_id === p.to)?.profiles.email ?? 'Unknown')
+                  return (
+                    <div class="suggested-payment">
+                      <div class="payment-info">
+                        <span class="payment-from">{fromLabel}</span>
+                        <span class="payment-arrow"> → </span>
+                        <span class="payment-to">{toLabel}</span>
+                        <span class="payment-amount"> · ${centsToDisplay(p.amount)}</span>
+                      </div>
+                      <form
+                        hx-post={`/api/groups/${groupId}/settle`}
+                        hx-target="#balances-section"
+                        hx-swap="innerHTML"
+                        style="margin:0;"
+                      >
+                        <input type="hidden" name="from_user_id" value={p.from} />
+                        <input type="hidden" name="to_user_id" value={p.to} />
+                        <input type="hidden" name="amount_cents" value={p.amount} />
+                        <button type="submit" class="btn-settle">Settle</button>
+                      </form>
+                    </div>
+                  )
+                })
+            }
+          </div>
+        </div>
       </div>
     </div>
 
@@ -285,8 +333,8 @@ const { data: messages } = await supabase
 
   <!-- Add Expense Modal -->
   <div
-    x-data="{ open: false }"
-    x-on:open-add-expense.window="open = true; document.getElementById('add-expense-error').innerHTML = ''"
+    x-data="{ open: false, splitMode: 'equal' }"
+    x-on:open-add-expense.window="open = true; splitMode = 'equal'; document.getElementById('add-expense-error').innerHTML = ''"
     x-show="open"
     x-cloak
     class="modal-backdrop"
@@ -321,6 +369,18 @@ const { data: messages } = await supabase
           </select>
         </div>
         <div class="form-group">
+          <label>Split mode</label>
+          <div class="split-mode-toggle">
+            <label class="split-mode-btn" x-bind:class="splitMode === 'equal' ? 'active' : ''">
+              <input type="radio" name="add_split_mode_radio" value="equal" x-model="splitMode" style="display:none" /> Equal
+            </label>
+            <label class="split-mode-btn" x-bind:class="splitMode === 'exact' ? 'active' : ''">
+              <input type="radio" name="add_split_mode_radio" value="exact" x-model="splitMode" style="display:none" /> Exact
+            </label>
+          </div>
+          <input type="hidden" name="split_mode" x-bind:value="splitMode" />
+        </div>
+        <div class="form-group" x-show="splitMode === 'equal'">
           <label>Split with</label>
           <div class="checkbox-group">
             {memberList.map(m => (
@@ -328,6 +388,17 @@ const { data: messages } = await supabase
                 <input type="checkbox" name="split_with" value={m.user_id} checked />
                 {m.user_id === user.id ? 'You' : m.profiles.email}
               </label>
+            ))}
+          </div>
+        </div>
+        <div class="form-group" x-show="splitMode === 'exact'" x-cloak>
+          <label>Amount per person</label>
+          <div class="exact-split-list">
+            {memberList.map(m => (
+              <div class="exact-split-row">
+                <span class="exact-split-label">{m.user_id === user.id ? 'You' : m.profiles.email}</span>
+                <input type="number" name={`exact_${m.user_id}`} step="0.01" min="0" placeholder="0.00" class="exact-split-input" />
+              </div>
             ))}
           </div>
         </div>
@@ -341,8 +412,8 @@ const { data: messages } = await supabase
 
   <!-- Edit Expense Modal -->
   <div
-    x-data="{ open: false, id: '', description: '', amount: '', paidBy: '', splitWith: [] }"
-    x-on:open-edit-expense.window="open = true; id = $event.detail.id; description = $event.detail.description; amount = $event.detail.amount; paidBy = $event.detail.paidBy; splitWith = $event.detail.splitWith; document.getElementById('edit-expense-error').innerHTML = ''"
+    x-data="{ open: false, id: '', description: '', amount: '', paidBy: '', splitWith: [], splitAmounts: {}, splitMode: 'equal' }"
+    x-on:open-edit-expense.window="open = true; id = $event.detail.id; description = $event.detail.description; amount = $event.detail.amount; paidBy = $event.detail.paidBy; splitWith = $event.detail.splitWith; splitAmounts = $event.detail.splitAmounts; splitMode = 'equal'; document.getElementById('edit-expense-error').innerHTML = ''"
     x-show="open"
     x-cloak
     class="modal-backdrop"
@@ -378,6 +449,18 @@ const { data: messages } = await supabase
           </select>
         </div>
         <div class="form-group">
+          <label>Split mode</label>
+          <div class="split-mode-toggle">
+            <label class="split-mode-btn" x-bind:class="splitMode === 'equal' ? 'active' : ''">
+              <input type="radio" name="edit_split_mode_radio" value="equal" x-model="splitMode" style="display:none" /> Equal
+            </label>
+            <label class="split-mode-btn" x-bind:class="splitMode === 'exact' ? 'active' : ''">
+              <input type="radio" name="edit_split_mode_radio" value="exact" x-model="splitMode" style="display:none" /> Exact
+            </label>
+          </div>
+          <input type="hidden" name="split_mode" x-bind:value="splitMode" />
+        </div>
+        <div class="form-group" x-show="splitMode === 'equal'">
           <label>Split with</label>
           <div class="checkbox-group">
             {memberList.map(m => (
@@ -385,6 +468,18 @@ const { data: messages } = await supabase
                 <input type="checkbox" name="split_with" value={m.user_id} x-bind:checked={`splitWith.includes('${m.user_id}')`} />
                 {m.user_id === user.id ? 'You' : m.profiles.email}
               </label>
+            ))}
+          </div>
+        </div>
+        <div class="form-group" x-show="splitMode === 'exact'" x-cloak>
+          <label>Amount per person</label>
+          <div class="exact-split-list">
+            {memberList.map(m => (
+              <div class="exact-split-row">
+                <span class="exact-split-label">{m.user_id === user.id ? 'You' : m.profiles.email}</span>
+                <input type="number" name={`exact_${m.user_id}`} step="0.01" min="0" placeholder="0.00" class="exact-split-input"
+                  x-bind:value={`splitAmounts['${m.user_id}'] ?? ''`} />
+              </div>
             ))}
           </div>
         </div>

@@ -126,6 +126,26 @@ create policy "expense_splits_insert" on expense_splits for insert with check (
   )
 );
 
+-- Settlements (records that one member paid another to settle a debt)
+create table if not exists settlements (
+  id uuid default gen_random_uuid() primary key,
+  group_id uuid references groups(id) on delete cascade not null,
+  from_user_id uuid references profiles(id) on delete cascade not null,
+  to_user_id uuid references profiles(id) on delete cascade not null,
+  amount_cents integer not null check (amount_cents > 0),
+  created_at timestamptz default now() not null
+);
+
+alter table settlements enable row level security;
+
+create policy "settlements_select" on settlements for select using (
+  group_id in (select public.get_my_group_ids())
+);
+
+create policy "settlements_insert" on settlements for insert with check (
+  group_id in (select public.get_my_group_ids())
+);
+
 -- Messages
 create table if not exists messages (
   id uuid default gen_random_uuid() primary key,

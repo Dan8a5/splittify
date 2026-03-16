@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro'
 import { createSupabaseServerClient, createSupabaseAdmin } from '../../../../lib/supabase'
-import { calculateSplits, calculateBalances, centsToDisplay } from '../../../../lib/balance'
+import { calculateSplits, calculateBalances, simplifyDebts, centsToDisplay } from '../../../../lib/balance'
+import { buildSuggestedPaymentsHtml } from './settle'
 
 export const POST: APIRoute = async ({ request, cookies, params }) => {
   const supabase = createSupabaseServerClient(request, cookies)
@@ -31,10 +32,10 @@ export const POST: APIRoute = async ({ request, cookies, params }) => {
   const description = form.get('description')?.toString().trim() ?? ''
   const amountStr = form.get('amount')?.toString() ?? '0'
   const paidBy = form.get('paid_by')?.toString() ?? user.id
-  const splitIds = form.getAll('split_with').map(v => v.toString())
+  const splitMode = form.get('split_mode')?.toString() === 'exact' ? 'exact' : 'equal'
 
-  if (!description || !amountStr || splitIds.length === 0) {
-    return new Response('<p class="error-msg">All fields required and at least one person to split with.</p>', {
+  if (!description || !amountStr) {
+    return new Response('<p class="error-msg">Description and amount are required.</p>', {
       status: 422,
       headers: { 'Content-Type': 'text/html' },
     })
@@ -55,11 +56,51 @@ export const POST: APIRoute = async ({ request, cookies, params }) => {
     })
   }
 
-  if (splitIds.some(id => !memberIds.has(id))) {
-    return new Response('<p class="error-msg">Invalid split_with users.</p>', {
-      status: 422,
-      headers: { 'Content-Type': 'text/html' },
-    })
+  let splitsToInsert: Array<{ user_id: string; amount_cents: number }>
+
+  if (splitMode === 'equal') {
+    const splitIds = form.getAll('split_with').map(v => v.toString())
+    if (splitIds.length === 0) {
+      return new Response('<p class="error-msg">Select at least one person to split with.</p>', {
+        status: 422,
+        headers: { 'Content-Type': 'text/html' },
+      })
+    }
+    if (splitIds.some(id => !memberIds.has(id))) {
+      return new Response('<p class="error-msg">Invalid split_with users.</p>', {
+        status: 422,
+        headers: { 'Content-Type': 'text/html' },
+      })
+    }
+    splitsToInsert = calculateSplits(amountCents, splitIds)
+  } else {
+    splitsToInsert = []
+    for (const m of (members ?? [])) {
+      const uid = (m as any).user_id
+      const val = form.get(`exact_${uid}`)?.toString().trim() ?? ''
+      if (!val) continue
+      const cents = Math.round(parseFloat(val) * 100)
+      if (isNaN(cents) || cents < 0) {
+        return new Response('<p class="error-msg">Invalid amount for one or more members.</p>', {
+          status: 422,
+          headers: { 'Content-Type': 'text/html' },
+        })
+      }
+      if (cents > 0) splitsToInsert.push({ user_id: uid, amount_cents: cents })
+    }
+    if (splitsToInsert.length === 0) {
+      return new Response('<p class="error-msg">Enter an amount for at least one person.</p>', {
+        status: 422,
+        headers: { 'Content-Type': 'text/html' },
+      })
+    }
+    const exactTotal = splitsToInsert.reduce((s, e) => s + e.amount_cents, 0)
+    if (Math.abs(exactTotal - amountCents) > 1) {
+      return new Response(`<p class="error-msg">Amounts must add up to $${(amountCents / 100).toFixed(2)} (got $${(exactTotal / 100).toFixed(2)}).</p>`, {
+        status: 422,
+        headers: { 'Content-Type': 'text/html' },
+      })
+    }
   }
 
   const { data: expense, error: expErr } = await admin
@@ -75,27 +116,32 @@ export const POST: APIRoute = async ({ request, cookies, params }) => {
     })
   }
 
-  const splits = calculateSplits(amountCents, splitIds)
   await admin.from('expense_splits').insert(
-    splits.map(s => ({ expense_id: expense.id, user_id: s.user_id, amount_cents: s.amount_cents }))
+    splitsToInsert.map(s => ({ expense_id: expense.id, user_id: s.user_id, amount_cents: s.amount_cents }))
   )
 
-  // Return updated expenses list + balances
+  return buildGroupResponse(admin, groupId, user.id, members ?? [])
+}
+
+async function buildGroupResponse(admin: any, groupId: string, userId: string, members: any[]) {
   const { data: allExpenses } = await admin
     .from('expenses')
     .select('id, description, amount_cents, paid_by, created_at, profiles(email)')
     .eq('group_id', groupId)
     .order('created_at', { ascending: false })
 
-  const { data: allSplits } = await admin
-    .from('expense_splits')
-    .select('expense_id, user_id, amount_cents')
-    .in('expense_id', (allExpenses ?? []).map((e: any) => e.id))
+  const { data: allSplits } = (allExpenses ?? []).length > 0
+    ? await admin.from('expense_splits').select('expense_id, user_id, amount_cents')
+        .in('expense_id', (allExpenses ?? []).map((e: any) => e.id))
+    : { data: [] }
 
-  const balances = calculateBalances(allExpenses ?? [], allSplits ?? [])
+  const { data: settlements } = await admin
+    .from('settlements').select('from_user_id, to_user_id, amount_cents')
+    .eq('group_id', groupId)
+
+  const balances = calculateBalances(allExpenses ?? [], allSplits ?? [], settlements ?? [])
   const totalCents = (allExpenses ?? []).reduce((sum: number, e: any) => sum + e.amount_cents, 0)
 
-  // Precompute per-user paid/share totals in one pass
   const paidByUser: Record<string, number> = {}
   for (const e of allExpenses ?? []) {
     paidByUser[(e as any).paid_by] = (paidByUser[(e as any).paid_by] ?? 0) + (e as any).amount_cents
@@ -105,12 +151,15 @@ export const POST: APIRoute = async ({ request, cookies, params }) => {
     shareByUser[(s as any).user_id] = (shareByUser[(s as any).user_id] ?? 0) + (s as any).amount_cents
   }
 
-  // Map expense_id -> split member IDs for pencil button data
   const splitsByExpense: Record<string, string[]> = {}
+  const splitAmountsMap: Record<string, Record<string, string>> = {}
   for (const s of allSplits ?? []) {
     const expId = (s as any).expense_id
+    const uid = (s as any).user_id
     if (!splitsByExpense[expId]) splitsByExpense[expId] = []
-    splitsByExpense[expId].push((s as any).user_id)
+    splitsByExpense[expId].push(uid)
+    if (!splitAmountsMap[expId]) splitAmountsMap[expId] = {}
+    splitAmountsMap[expId][uid] = ((s as any).amount_cents / 100).toFixed(2)
   }
 
   const pencilIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>`
@@ -125,6 +174,7 @@ export const POST: APIRoute = async ({ request, cookies, params }) => {
     const date = new Date(e.created_at).toLocaleDateString()
     const amountDisplay = (e.amount_cents / 100).toFixed(2)
     const splitWith = escAttr(JSON.stringify(splitsByExpense[e.id] ?? []))
+    const splitAmounts = escAttr(JSON.stringify(splitAmountsMap[e.id] ?? {}))
     return `
       <div class="expense-item">
         <div>
@@ -138,7 +188,8 @@ export const POST: APIRoute = async ({ request, cookies, params }) => {
             data-amount="${amountDisplay}"
             data-paid-by="${e.paid_by}"
             data-split-with="${splitWith}"
-            onclick="window.dispatchEvent(new CustomEvent('open-edit-expense',{detail:{id:'${e.id}',description:this.dataset.description,amount:this.dataset.amount,paidBy:this.dataset.paidBy,splitWith:JSON.parse(this.dataset.splitWith)}}))">
+            data-split-amounts="${splitAmounts}"
+            onclick="window.dispatchEvent(new CustomEvent('open-edit-expense',{detail:{id:'${e.id}',description:this.dataset.description,amount:this.dataset.amount,paidBy:this.dataset.paidBy,splitWith:JSON.parse(this.dataset.splitWith),splitAmounts:JSON.parse(this.dataset.splitAmounts)}}))">
             ${pencilIcon}
           </button>
           <form method="POST" action="/api/expenses/${e.id}/delete" style="margin:0;">
@@ -148,12 +199,10 @@ export const POST: APIRoute = async ({ request, cookies, params }) => {
       </div>`
   }).join('')
 
-  const balancesHtml = (members ?? []).map((m: any) => {
+  const balancesHtml = members.map((m: any) => {
     const uid = m.user_id
-    const email = m.profiles?.email ?? 'Unknown'
     const net = balances[uid] ?? 0
-    const isCurrentUser = uid === user.id
-    const label = isCurrentUser ? 'You' : escAttr(email)
+    const label = uid === userId ? 'You' : escAttr(m.profiles?.email ?? 'Unknown')
     const paid = paidByUser[uid] ?? 0
     const share = shareByUser[uid] ?? 0
     const netSpan = net === 0
@@ -178,12 +227,19 @@ export const POST: APIRoute = async ({ request, cookies, params }) => {
       </div>`
   }).join('')
 
+  const emailMap: Record<string, string> = {}
+  for (const m of members) {
+    emailMap[(m as any).user_id] = (m as any).profiles?.email ?? 'Unknown'
+  }
+  const suggestedPaymentsHtml = buildSuggestedPaymentsHtml(
+    simplifyDebts(balances), emailMap, groupId, userId
+  )
+
   return new Response(`
     <div id="expense-form-error"></div>
     <div id="expenses-list">${expensesHtml || '<p class="empty-state">No expenses yet.</p>'}</div>
-    <div id="balances-section" hx-swap-oob="innerHTML">
-      ${balancesHtml}
-    </div>
+    <div id="balances-section" hx-swap-oob="innerHTML">${balancesHtml}</div>
+    <div id="suggested-payments" hx-swap-oob="innerHTML">${suggestedPaymentsHtml}</div>
     <span id="group-total" hx-swap-oob="outerHTML">Total spent: <strong>$${centsToDisplay(totalCents)}</strong></span>
   `, { headers: { 'Content-Type': 'text/html' } })
 }

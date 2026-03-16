@@ -352,6 +352,70 @@ footer {
 /* Archived group card */
 .archived-card { opacity: 0.55; }
 
+/* SPLIT MODE TOGGLE */
+.split-mode-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  width: fit-content;
+  margin-top: 0.35rem;
+}
+.split-mode-btn {
+  padding: 0.3rem 1rem;
+  font-size: 0.78rem;
+  font-family: inherit;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  background: var(--bg);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s, color 0.15s;
+}
+.split-mode-btn:first-child { border-right: 1px solid var(--border); }
+.split-mode-btn.active { background: var(--blue); color: var(--bg); }
+
+/* EXACT SPLIT INPUTS */
+.exact-split-list { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.25rem; }
+.exact-split-row { display: flex; align-items: center; gap: 0.75rem; }
+.exact-split-label { font-size: 0.85rem; flex: 1; color: var(--text); text-transform: none; letter-spacing: 0; }
+.exact-split-input { width: 110px !important; flex: none; }
+
+/* SUGGESTED PAYMENTS */
+.suggested-payment {
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+}
+.suggested-payment:last-child { border-bottom: none; }
+.payment-info { display: flex; align-items: center; flex-wrap: wrap; gap: 0.2rem; }
+.payment-from { color: var(--red); font-weight: 700; }
+.payment-arrow { color: var(--text-muted); }
+.payment-to { color: var(--green-amount); font-weight: 700; }
+.payment-amount { color: var(--text); font-weight: 700; }
+.btn-settle {
+  background: none;
+  border: 1px solid var(--green);
+  color: var(--green);
+  font-family: inherit;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+.btn-settle:hover { background: var(--green); color: var(--bg); }
+
 /* MESSAGE BOARD */
 .message-board { margin-top: 2rem; border-top: 1px solid var(--border); padding-top: 1.5rem; }
 .messages-list {
