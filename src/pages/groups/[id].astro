@@ -79,6 +79,14 @@ for (const s of splits ?? []) {
   if (!splitsByExpense[expId]) splitsByExpense[expId] = []
   splitsByExpense[expId].push((s as any).user_id)
 }
+
+// Fetch messages
+const { data: messages } = await supabase
+  .from('messages')
+  .select('id, body, created_at, user_id, profiles(email)')
+  .eq('group_id', groupId)
+  .order('created_at', { ascending: true })
+  .limit(100)
 ---
 <Layout title={group.name} user={user}>
   <main>
@@ -242,6 +250,36 @@ for (const s of splits ?? []) {
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- Message Board -->
+    <div class="message-board">
+      <h2 class="col-heading">Group Chat</h2>
+      <div id="messages-list" class="messages-list">
+        {(messages ?? []).length === 0
+          ? <p class="empty-state">No messages yet. Start the conversation.</p>
+          : (messages as any[]).map((msg: any) => (
+              <div class="message-item">
+                <div class="message-header">
+                  <span class="message-author">{msg.user_id === user.id ? 'You' : msg.profiles?.email ?? 'Unknown'}</span>
+                  <span class="message-time">{new Date(msg.created_at).toLocaleString()}</span>
+                </div>
+                <p class="message-body">{msg.body}</p>
+              </div>
+            ))
+        }
+      </div>
+      <div id="message-form-error"></div>
+      <form
+        hx-post={`/api/groups/${groupId}/messages`}
+        hx-target="#messages-list"
+        hx-swap="beforeend"
+        hx-on::after-request="if(event.detail.successful) { this.reset(); document.getElementById('messages-list').lastElementChild?.scrollIntoView({behavior:'smooth'}) } else { document.getElementById('message-form-error').innerHTML = event.detail.xhr.responseText }"
+        class="message-form"
+      >
+        <textarea name="body" placeholder="Write a message…" rows="2" required maxlength="1000" class="message-textarea"></textarea>
+        <button type="submit" class="btn btn-outline-green">Send</button>
+      </form>
     </div>
   </main>
 

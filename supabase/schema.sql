@@ -125,3 +125,25 @@ create policy "expense_splits_insert" on expense_splits for insert with check (
     and e.group_id in (select public.get_my_group_ids())
   )
 );
+
+-- Messages
+create table if not exists messages (
+  id uuid default gen_random_uuid() primary key,
+  group_id uuid references groups(id) on delete cascade not null,
+  user_id uuid references profiles(id) on delete cascade not null,
+  body text not null check (char_length(body) > 0 and char_length(body) <= 1000),
+  created_at timestamptz default now() not null
+);
+
+alter table messages enable row level security;
+
+-- Only group members can read messages in their groups
+create policy "messages_select" on messages for select using (
+  group_id in (select public.get_my_group_ids())
+);
+
+-- Members can only post as themselves
+create policy "messages_insert" on messages for insert with check (
+  user_id = auth.uid()
+  and group_id in (select public.get_my_group_ids())
+);
